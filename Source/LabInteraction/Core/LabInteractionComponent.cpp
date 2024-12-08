@@ -6,6 +6,7 @@
 #include "LabInteractableComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "LabInteraction/LabInteraction.h"
+#include "Net/UnrealNetwork.h"
 
 ULabInteractionComponent::ULabInteractionComponent()
 {
@@ -21,6 +22,9 @@ ULabInteractionComponent::ULabInteractionComponent()
 void ULabInteractionComponent::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ThisClass, bInteractionActive);
+	DOREPLIFETIME(ThisClass, FocusedInteractableActor);
 }
 
 void ULabInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -77,7 +81,6 @@ void ULabInteractionComponent::UpdateTraceInteractable(const float DeltaTime)
 		LastUpdateTime = 0.f;
 
 		UpdateFocusedInteractable(PerformTrace());
-		UpdateInteractionVisuals();
 	}
 }
 
@@ -151,13 +154,63 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 		if (IsValid(InteractableActor))
 		{
 			ILabInteractableInterface::Execute_UpdateFocus(InteractableActor, true);
+			OnRep_FocusedInteractableActor();
+			SetInteractionActive(true);
+		}
+		else
+		{
+			SetInteractionActive(false);
 		}
 		
 		FocusedInteractableActor = InteractableActor;
 	}
 }
 
-void ULabInteractionComponent::UpdateInteractionVisuals()
+void ULabInteractionComponent::SetInteractionActive(const bool bNewActive)
 {
+	if (GetOwner()->GetLocalRole() < ROLE_Authority)
+	{
+		UE_LOG(LogLabInteraction, Warning, TEXT("SetInteractionActive called on client! Role: %d"), GetOwner()->GetLocalRole());
+		return;
+	}
 	
+	UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
+		*GetOwner()->GetName(), bNewActive ? TEXT("Active") : TEXT("Inactive"));
+
+	bInteractionActive = bNewActive;
+
+	UE_LOG(LogLabInteraction, Log, TEXT("Interaction Active State updated. New state: %s"), 
+		bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
+	
+	OnRep_bInteractionActive();
+}
+
+void ULabInteractionComponent::OnRep_bInteractionActive()
+{
+	UUserWidget* InteractionWidget = GetWidget();
+	if (!IsValid(InteractionWidget))
+	{
+		return;
+	}
+	
+	if (bInteractionActive)
+	{
+		SetVisibility(true);
+		InteractionWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+	else
+	{
+		SetVisibility(false);
+		InteractionWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+}
+
+void ULabInteractionComponent::OnRep_FocusedInteractableActor()
+{
+	if (IsValid(FocusedInteractableActor))
+	{
+		const FVector InteractableLocation = FocusedInteractableActor->GetActorLocation();
+		SetWorldLocation(InteractableLocation);
+		SetUsingAbsoluteLocation(true);
+	}
 }

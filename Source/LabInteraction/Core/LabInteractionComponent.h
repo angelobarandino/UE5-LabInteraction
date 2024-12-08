@@ -28,9 +28,6 @@ public:
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
-
-	UPROPERTY()
-	TObjectPtr<AActor> FocusedInteractableActor;
 	
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Detection")
@@ -45,13 +42,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bShowDebugTraces = false;
 	
-	UFUNCTION(BlueprintCallable, Category = "Detection")
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void SetDetectionActive(const bool bNewActive);
+	
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void SetInteractionActive(bool bNewActive);
 	
 private:
 	bool bDetectionActive = false;
 	float LastUpdateTime = 0.f;
-
+	
+	UPROPERTY(ReplicatedUsing = OnRep_bInteractionActive)
+	bool bInteractionActive = false;
+	
+	UPROPERTY(ReplicatedUsing = OnRep_FocusedInteractableActor)
+	TObjectPtr<AActor> FocusedInteractableActor;
+	
 	UFUNCTION()
 	void UpdateTraceInteractable(const float DeltaTime);
 
@@ -68,5 +74,8 @@ private:
 	void UpdateFocusedInteractable(AActor* InteractableActor);
 
 	UFUNCTION()
-	void UpdateInteractionVisuals();
+	void OnRep_bInteractionActive();
+	
+	UFUNCTION()
+	void OnRep_FocusedInteractableActor();
 };
