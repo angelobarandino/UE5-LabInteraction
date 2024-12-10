@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
+#include "LabInteraction/LabInteraction.h"
 #include "LabInteractionKeys.generated.h"
 
 class ULabInteractInputKey;
@@ -54,8 +55,39 @@ struct FLabInteractableData
 	FText DisplayText = FText::FromString("Placeholder Text");
 
 	UPROPERTY(BlueprintReadWrite, EditDefaultsOnly, Category = "Interaction")
-	FLabInteractionKeys InteractionData;
+	FDataTableRowHandle InteractionKeysRowHandle = FDataTableRowHandle();
 	
 	UPROPERTY(BlueprintReadWrite, EditDefaultsOnly, Category = "Interaction")
-	TObjectPtr<UObject> CustomData = nullptr;
+	TWeakObjectPtr<UObject> CustomData = nullptr;
+
+	FORCEINLINE TArray<FLabInteractInputTemplate> GetInputKeys() const
+	{
+		if (!IsValid())
+		{
+			UE_LOG(LogLabInteraction, Warning, TEXT("Failed to retrieve row from InteractionKeysRowHandle, there is no valid data."));
+			return TArray<FLabInteractInputTemplate>();
+		}
+		
+		if (CachedInteractionKeys.IsSet())
+		{
+			return CachedInteractionKeys.GetValue()->InputKeys;
+		}
+		
+		CachedInteractionKeys = InteractionKeysRowHandle.GetRow<FLabInteractionKeys>("FLabInteractableData::GetInputKeys");
+		if (!CachedInteractionKeys.IsSet())
+		{
+			UE_LOG(LogLabInteraction, Warning, TEXT("Failed to retrieve row from InteractionKeysRowHandle in FLabInteractableData."));
+			return TArray<FLabInteractInputTemplate>();
+		}
+
+		return CachedInteractionKeys.GetValue()->InputKeys;
+	}
+
+	FORCEINLINE bool IsValid() const
+	{
+		return InteractionKeysRowHandle.DataTable != nullptr && InteractionKeysRowHandle.RowName != NAME_None;
+	}
+
+private:
+    mutable TOptional<FLabInteractionKeys*> CachedInteractionKeys;
 };

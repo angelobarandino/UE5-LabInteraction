@@ -157,6 +157,7 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 	{
 		if (FocusedInteractableActor)
 		{
+			TempInteractionData = FLabInteractableData();
 			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, false);
 		}
 		
@@ -164,6 +165,7 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 		if (IsValid(FocusedInteractableActor))
 		{
 			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, true);
+			ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor, TempInteractionData);
 			
 			SetInteractionActive(true);
 		}
@@ -182,11 +184,6 @@ void ULabInteractionComponent::SetInteractionActive(const bool bNewActive)
 		*GetOwner()->GetName(), bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
 	
 	OnRep_bInteractionActive();
-}
-
-FLabInteractableData ULabInteractionComponent::GetInteractableData() const
-{
-	return ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor);
 }
 
 void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed)
@@ -216,9 +213,6 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
         // Record the time when the key is pressed
 		InputStartTimes.Add(InputKey, CurrentTimeSeconds);
 
-		// Cache focused interactable data
-		TempInteractionData = GetInteractableData();
-
 		bHoldProgressActive = false;
 		GetWorld()->GetTimerManager().SetTimer(
 			HoldDelayTimerHandle,
@@ -245,7 +239,7 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
 		// Remove recorded key pressed
 		InputStartTimes.Remove(InputKey);
 
-		const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.InteractionData.InputKeys;
+		const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.GetInputKeys();
 		for (int Index = 0; Index < InteractInputKeys.Num(); ++Index)
 		{
 			if (InteractInputKeys[Index].InputKey.Get() != InputKey)
@@ -286,8 +280,6 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
 				}
 			}
 		}
-
-		TempInteractionData = FLabInteractableData();
 	}
 }
 
@@ -312,7 +304,7 @@ void ULabInteractionComponent::OnRep_bInteractionActive()
 	
 	if (bInteractionActive && IsValid(FocusedInteractableActor))
 	{
-		OnUpdateInteractionWidget.Broadcast(this);
+		OnUpdateInteractionWidget.Broadcast(this, TempInteractionData.DisplayText, TempInteractionData.GetInputKeys());
 		
 		SetVisibility(true);
 		InteractionWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -373,7 +365,7 @@ void ULabInteractionComponent::UpdateHoldInteraction(float DeltaTime)
 	if (InputStartTimes.IsEmpty())
 		return;
 	
-	const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.InteractionData.InputKeys;
+	const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.GetInputKeys();
 	if (InteractInputKeys.IsEmpty())
 		return;
 

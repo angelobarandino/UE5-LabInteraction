@@ -11,8 +11,7 @@
 #include "LabInteractionComponent.generated.h"
 
 
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnUpdateInteractionWidget, ULabInteractionComponent*, Interactor);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateInteractionWidget, ULabInteractionComponent*, Interactor, const FText&, InteractableName, const TArray<FLabInteractInputTemplate>&, InteractionKeys);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHoldProgressUpdated, ULabInteractInputKey*, InputKey, float, Progress);
 
 class ULabInteractableInterface;
@@ -58,9 +57,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void SetInteractionActive(bool bNewActive);
-
-	UFUNCTION(BlueprintCallable, Category = "Interaction")
-	FLabInteractableData GetInteractableData() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed);
