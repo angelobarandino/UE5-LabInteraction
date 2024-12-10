@@ -3,12 +3,17 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "LabInteractionKeys.h"
 #include "Components/ActorComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
 
 #include "LabInteractionComponent.generated.h"
 
+
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnUpdateInteractionWidget, ULabInteractionComponent*, Interactor);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHoldProgressUpdated, ULabInteractInputKey*, InputKey, float, Progress);
 
 class ULabInteractableInterface;
 
@@ -22,7 +27,7 @@ public:
 	ULabInteractionComponent();
 
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
-	
+
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
@@ -30,6 +35,12 @@ protected:
 	virtual void BeginPlay() override;
 	
 public:
+	UPROPERTY(BlueprintAssignable, Category = "Events")
+	FOnUpdateInteractionWidget OnUpdateInteractionWidget;
+
+	UPROPERTY(BlueprintAssignable, Category = "Events")
+	FOnHoldProgressUpdated OnHoldProgressUpdated;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Detection")
 	TEnumAsByte<ECollisionChannel> DetectionChannel;
 	
@@ -44,22 +55,36 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void SetDetectionActive(const bool bNewActive);
-	
+
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void SetInteractionActive(bool bNewActive);
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	FLabInteractableData GetInteractableData() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed);
+
+	UFUNCTION(Server, Reliable)
+	void Interact(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate);
 	
 private:
 	bool bDetectionActive = false;
 	float LastUpdateTime = 0.f;
+	float PressDurationThreshold = 0.2f;
+	bool bHoldProgressActive = false;
+	FTimerHandle HoldDelayTimerHandle;
+	FLabInteractableData TempInteractionData;
+	TMap<ULabInteractInputKey*, float> InputStartTimes;
+
+	UPROPERTY()
+	TObjectPtr<AActor> FocusedInteractableActor;
 	
 	UPROPERTY(ReplicatedUsing = OnRep_bInteractionActive)
 	bool bInteractionActive = false;
-	
-	UPROPERTY(ReplicatedUsing = OnRep_FocusedInteractableActor)
-	TObjectPtr<AActor> FocusedInteractableActor;
-	
+
 	UFUNCTION()
-	void UpdateTraceInteractable(const float DeltaTime);
+	void TraceInteractables(const float DeltaTime);
 
 	UFUNCTION()
 	EDrawDebugTrace::Type GetDrawDebugType() const;
@@ -77,5 +102,15 @@ private:
 	void OnRep_bInteractionActive();
 	
 	UFUNCTION()
-	void OnRep_FocusedInteractableActor();
+	void UpdateInteractionVisuals();
+	
+	UFUNCTION()
+	void InitializeWidget();
+
+	UFUNCTION()
+	void BeginHoldProgress();
+
+	UFUNCTION()
+	void UpdateHoldInteraction(float DeltaTime);
 };
+

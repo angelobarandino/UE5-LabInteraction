@@ -4,6 +4,8 @@
 #include "LabInteractionComponent.h"
 
 #include "LabInteractableComponent.h"
+#include "LabInteractInputKey.h"
+#include "LabInteractionWidgetInterface.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "LabInteraction/LabInteraction.h"
 #include "Net/UnrealNetwork.h"
@@ -11,7 +13,8 @@
 ULabInteractionComponent::ULabInteractionComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
-	
+	TempInteractionData = FLabInteractableData();
+
 	SetVisibility(false);
 	SetIsReplicatedByDefault(true);
 	SetWidgetSpace(EWidgetSpace::Screen);
@@ -24,7 +27,6 @@ void ULabInteractionComponent::GetLifetimeReplicatedProps(TArray<class FLifetime
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ThisClass, bInteractionActive);
-	DOREPLIFETIME(ThisClass, FocusedInteractableActor);
 }
 
 void ULabInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -33,13 +35,17 @@ void ULabInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 
 	if (!bDetectionActive)
 		return;
-
-	UpdateTraceInteractable(DeltaTime);
+	
+	TraceInteractables(DeltaTime);
+	UpdateHoldInteraction(DeltaTime);
+	UpdateInteractionVisuals();
 }
 
 void ULabInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	InitializeWidget();
 
 	SetDetectionActive(true);
 }
@@ -49,7 +55,7 @@ void ULabInteractionComponent::SetDetectionActive(const bool bNewActive)
 	const APawn* Pawn = Cast<APawn>(GetOwner());
 	if (!IsValid(Pawn))
 	{
-		UE_LOG(LogLabInteraction, Warning, TEXT("[ULabInteractComponent] SetDetectionActive: Owner is not a valid Pawn. Detection will be inactive."));
+		UE_LOG(LogLabInteraction, Warning, TEXT("SetDetectionActive: Owner is not a valid Pawn. Detection will be inactive."));
 		bDetectionActive = false;
 		return;
 	}
@@ -71,9 +77,12 @@ void ULabInteractionComponent::SetDetectionActive(const bool bNewActive)
 	}
 	
 	bDetectionActive = bNewActive;
+	
+	UE_LOG(LogLabInteraction, Log, TEXT("SetDetectionActive: Detection active state updated. New state: %s | Role: %d"), 
+		bDetectionActive ? TEXT("Active") : TEXT("Inactive"), GetOwner()->GetLocalRole());
 }
 
-void ULabInteractionComponent::UpdateTraceInteractable(const float DeltaTime)
+void ULabInteractionComponent::TraceInteractables(const float DeltaTime)
 {
 	LastUpdateTime += DeltaTime;
 	if (LastUpdateTime >= DetectionFrequency)
@@ -150,39 +159,147 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 		{
 			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, false);
 		}
-    
-		if (IsValid(InteractableActor))
+		
+		FocusedInteractableActor = InteractableActor;
+		if (IsValid(FocusedInteractableActor))
 		{
-			ILabInteractableInterface::Execute_UpdateFocus(InteractableActor, true);
-			OnRep_FocusedInteractableActor();
+			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, true);
+			
 			SetInteractionActive(true);
 		}
 		else
 		{
 			SetInteractionActive(false);
 		}
-		
-		FocusedInteractableActor = InteractableActor;
 	}
 }
 
 void ULabInteractionComponent::SetInteractionActive(const bool bNewActive)
 {
-	if (GetOwner()->GetLocalRole() < ROLE_Authority)
-	{
-		UE_LOG(LogLabInteraction, Warning, TEXT("SetInteractionActive called on client! Role: %d"), GetOwner()->GetLocalRole());
-		return;
-	}
-	
-	UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
-		*GetOwner()->GetName(), bNewActive ? TEXT("Active") : TEXT("Inactive"));
-
 	bInteractionActive = bNewActive;
 
-	UE_LOG(LogLabInteraction, Log, TEXT("Interaction Active State updated. New state: %s"), 
-		bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
+	UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
+		*GetOwner()->GetName(), bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
 	
 	OnRep_bInteractionActive();
+}
+
+FLabInteractableData ULabInteractionComponent::GetInteractableData() const
+{
+	return ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor);
+}
+
+void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed)
+{
+	if (!IsValid(InputKey))
+	{
+		UE_LOG(LogLabInteraction, Error, TEXT("InteractionInput is called but InputKey is missing."))
+		return;
+	}
+
+	if (!IsValid(FocusedInteractableActor))
+	{
+		UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput is called but no focused interactable actor."))
+		return;
+	}
+
+	const float CurrentTimeSeconds = GetWorld()->GetTimeSeconds();
+
+	if (bPressed)
+	{
+		if (InputStartTimes.Contains(InputKey))
+		{
+			UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput duplicate key press detected."));
+			return;
+		}
+		
+        // Record the time when the key is pressed
+		InputStartTimes.Add(InputKey, CurrentTimeSeconds);
+
+		// Cache focused interactable data
+		TempInteractionData = GetInteractableData();
+
+		bHoldProgressActive = false;
+		GetWorld()->GetTimerManager().SetTimer(
+			HoldDelayTimerHandle,
+			this,
+			&ThisClass::BeginHoldProgress,
+			PressDurationThreshold,
+			false);
+	}
+	else
+	{
+		// clear hold delay timer handle
+		GetWorld()->GetTimerManager().ClearTimer(HoldDelayTimerHandle);
+		
+		const float* StartTime = InputStartTimes.Find(InputKey);
+		if (!StartTime)
+		{
+			UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput released without matching press."));
+			return;
+		}
+
+		// Calculate how long the input was held
+		const float PressDuration = CurrentTimeSeconds - *StartTime;
+		
+		// Remove recorded key pressed
+		InputStartTimes.Remove(InputKey);
+
+		const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.InteractionData.InputKeys;
+		for (int Index = 0; Index < InteractInputKeys.Num(); ++Index)
+		{
+			if (InteractInputKeys[Index].InputKey.Get() != InputKey)
+			{
+				continue;
+			}
+			
+			if (InteractInputKeys[Index].InteractionType == ELabInteractionType::InteractionType_Press)
+			{
+				if (PressDuration < PressDurationThreshold)
+				{
+					UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
+					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+				}
+				else
+				{
+					const bool ContainsHoldInput = InteractInputKeys.ContainsByPredicate([](const FLabInteractInputTemplate& Template)
+					{
+						return Template.InteractionType == ELabInteractionType::InteractionType_Hold;
+					});
+
+					if (!ContainsHoldInput)
+					{
+						UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
+						Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+					}
+				}
+			}
+			else if (InteractInputKeys[Index].InteractionType == ELabInteractionType::InteractionType_Hold)
+			{
+				// Reset progress when key is released
+				OnHoldProgressUpdated.Broadcast(InputKey, 0);
+			
+				if (PressDuration >= InteractInputKeys[Index].InteractionDuration)
+				{
+					UE_LOG(LogLabInteraction, Log, TEXT("Hold detected."));
+					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+				}
+			}
+		}
+
+		TempInteractionData = FLabInteractableData();
+	}
+}
+
+void ULabInteractionComponent::Interact_Implementation(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate)
+{
+	if (!IsValid(InteractableActor))
+		return;
+
+	if (!InputTemplate.InputKey.IsValid())
+		return;
+
+	ILabInteractableInterface::Execute_Interact(InteractableActor, InputTemplate.Name, this);
 }
 
 void ULabInteractionComponent::OnRep_bInteractionActive()
@@ -193,8 +310,10 @@ void ULabInteractionComponent::OnRep_bInteractionActive()
 		return;
 	}
 	
-	if (bInteractionActive)
+	if (bInteractionActive && IsValid(FocusedInteractableActor))
 	{
+		OnUpdateInteractionWidget.Broadcast(this);
+		
 		SetVisibility(true);
 		InteractionWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
@@ -205,12 +324,119 @@ void ULabInteractionComponent::OnRep_bInteractionActive()
 	}
 }
 
-void ULabInteractionComponent::OnRep_FocusedInteractableActor()
+void ULabInteractionComponent::UpdateInteractionVisuals()
 {
-	if (IsValid(FocusedInteractableActor))
+	if (bInteractionActive && IsValid(FocusedInteractableActor))
 	{
-		const FVector InteractableLocation = FocusedInteractableActor->GetActorLocation();
-		SetWorldLocation(InteractableLocation);
-		SetUsingAbsoluteLocation(true);
+		FVector Origin;
+        FVector BoxExtent;
+		
+		FocusedInteractableActor->GetActorBounds(false, Origin, BoxExtent);
+		const FVector BoundingBoxCenter = Origin;
+		
+		SetWorldLocation(BoundingBoxCenter);
+	}
+}
+
+void ULabInteractionComponent::InitializeWidget()
+{
+	InitWidget();
+
+	UUserWidget* InteractionWidget = GetWidget();
+	if (!IsValid(InteractionWidget))
+	{
+		return;
+	}
+
+	if (InteractionWidget->Implements<ULabInteractionWidgetInterface>())
+	{
+		ILabInteractionWidgetInterface::Execute_InitializeBindings(InteractionWidget, this);
+	}
+}
+
+void ULabInteractionComponent::BeginHoldProgress()
+{
+	if (!IsValid(FocusedInteractableActor))
+		return;
+	
+	bHoldProgressActive = true;
+}
+
+void ULabInteractionComponent::UpdateHoldInteraction(float DeltaTime)
+{
+	if (!bHoldProgressActive)
+		return;
+	
+	if (!IsValid(FocusedInteractableActor))
+		return;
+	
+	if (InputStartTimes.IsEmpty())
+		return;
+	
+	const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.InteractionData.InputKeys;
+	if (InteractInputKeys.IsEmpty())
+		return;
+
+	// Create a map for efficient lookup
+	TMap<ULabInteractInputKey*, const FLabInteractInputTemplate*> InputKeyToTemplateMap;
+	for (const FLabInteractInputTemplate& Template : InteractInputKeys)
+	{
+		InputKeyToTemplateMap.Add(Template.InputKey.Get(), &Template);
+	}
+	
+	// Keys to remove after completion
+	TArray<ULabInteractInputKey*> CompletedKeys;
+	
+	const float CurrentTimeSeconds = GetWorld()->GetTimeSeconds();
+	for (const auto& Pair : InputStartTimes)
+	{
+		ULabInteractInputKey* InputKey = Pair.Key;
+		const float StartTime = Pair.Value;
+		const float ElapsedTime = CurrentTimeSeconds - StartTime;
+
+		// Find the interaction template for this key
+		const FLabInteractInputTemplate** InputTemplatePtr = InputKeyToTemplateMap.Find(InputKey);
+		if (!InputTemplatePtr)
+		{
+			// Skip if no template is found
+			continue;
+		}
+		
+		const FLabInteractInputTemplate* InputTemplate = *InputTemplatePtr;
+		if (InputTemplate->InteractionType == ELabInteractionType::InteractionType_Hold)
+		{
+			const float Progress = FMath::Clamp(ElapsedTime / InputTemplate->InteractionDuration, 0.0f, 1.0f);
+
+			// Broadcast progress if it has changed significantly
+			static constexpr float UpdateThreshold = 0.01f;
+			static TMap<ULabInteractInputKey*, float> LastProgressMap;
+
+			const float* LastProgress = LastProgressMap.Find(InputKey);
+			if (!LastProgress || FMath::Abs(Progress - *LastProgress) >= UpdateThreshold)
+			{
+				OnHoldProgressUpdated.Broadcast(InputKey, Progress);
+				LastProgressMap.Add(InputKey, Progress);
+			}
+
+			// Handle completion
+			if (Progress >= 1.0f)
+			{
+				Interact(FocusedInteractableActor, *InputTemplate);
+				bHoldProgressActive = false;
+				
+				UE_LOG(LogLabInteraction, Log, TEXT("Hold completed for InputKey."));
+				OnHoldProgressUpdated.Broadcast(InputKey, 0);
+				CompletedKeys.Add(InputKey);
+				
+				// Clean up progress tracking
+				LastProgressMap.Remove(InputKey); 
+			}
+		}
+	}
+	
+	// Remove completed keys after iteration
+	for (const ULabInteractInputKey* CompletedKey : CompletedKeys)
+	{
+		InputStartTimes.Remove(CompletedKey);
 	}
 }

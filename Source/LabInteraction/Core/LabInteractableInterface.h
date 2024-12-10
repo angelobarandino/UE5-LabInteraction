@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "LabInteractionKeys.h"
 #include "UObject/Interface.h"
 #include "LabInteractableInterface.generated.h"
 
@@ -24,10 +25,11 @@ class LABINTERACTION_API ILabInteractableInterface
 public:
 
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
-	bool IsInteractionActive() const;
-	
-	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
 	void UpdateFocus(bool bActive);
-	
-	virtual USceneComponent* GetRootComponent() const = 0;
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
+	FLabInteractableData GetInteractableData();
+
+	UFUNCTION(BlueprintImplementableEvent)
+	void Interact(const FName& Name, const ULabInteractionComponent* Interactor);
 };
