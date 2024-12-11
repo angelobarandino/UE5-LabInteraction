@@ -3,9 +3,10 @@
 
 #include "LabInteractionComponent.h"
 
-#include "LabInteractableComponent.h"
+#include "LabInteractableInterface.h"
 #include "LabInteractInputKey.h"
 #include "LabInteractionWidgetInterface.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "LabInteraction/LabInteraction.h"
 #include "Net/UnrealNetwork.h"
@@ -44,6 +45,8 @@ void ULabInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 void ULabInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	InitialWidgetClass = GetWidgetClass();
 
 	InitializeWidget();
 
@@ -165,12 +168,17 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 		if (IsValid(FocusedInteractableActor))
 		{
 			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, true);
-			ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor, TempInteractionData);
-			
 			SetInteractionActive(true);
 		}
 		else
 		{
+			if (WidgetStack.Num() != 0)
+			{
+				WidgetStack.Empty();
+				SetWidgetClass(InitialWidgetClass);
+				InitializeWidget();
+			}
+			
 			SetInteractionActive(false);
 		}
 	}
@@ -178,12 +186,17 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 
 void ULabInteractionComponent::SetInteractionActive(const bool bNewActive)
 {
-	bInteractionActive = bNewActive;
+	if (bInteractionActive != bNewActive)
+	{
+		bInteractionActive = bNewActive;
 
-	UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
-		*GetOwner()->GetName(), bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
+		UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
+			*GetOwner()->GetName(), bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
 	
-	OnRep_bInteractionActive();
+		OnInteractionActiveChanged.Broadcast(this, bInteractionActive);	
+
+		OnRep_bInteractionActive();
+	}
 }
 
 void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed)
@@ -281,6 +294,50 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
 			}
 		}
 	}
+} 
+UUserWidget* ULabInteractionComponent::PushWidget(const TSubclassOf<UUserWidget> NewWidgetClass)
+{
+	if (!NewWidgetClass)
+	{
+		UE_LOG(LogLabInteraction, Warning, TEXT("NewWidgetClass is null"));
+		return nullptr;
+	}
+	
+	const APawn* OwningActor = Cast<APawn>(GetOwner());
+	if (OwningActor && OwningActor->IsLocallyControlled())
+	{
+		if (GetWidget()->IsA(NewWidgetClass))
+			return nullptr;
+		
+		if (WidgetStack.Num() == 0 && !InitialWidgetClass)
+		{
+			InitialWidgetClass = GetWidgetClass();
+		}
+			
+		WidgetStack.Add(NewWidgetClass);
+		
+		SetWidgetClass(NewWidgetClass);
+		InitializeWidget();
+
+		OnRep_bInteractionActive();
+		return GetWidget();
+	}
+
+	UE_LOG(LogLabInteraction, Warning, TEXT("PushWidget: OwningActor is not locally controlled"));
+	return nullptr;
+}
+
+void ULabInteractionComponent::PopWidget(UUserWidget*& OutActiveWidget)
+{
+	if (WidgetStack.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PopWidget: Cannot pop widget. Already at the initial widget."));
+		OutActiveWidget = GetWidget();
+		return;
+	}
+	
+	WidgetStack.Pop();
+	OutActiveWidget = PushWidget(WidgetStack.Last());
 }
 
 void ULabInteractionComponent::Interact_Implementation(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate)
@@ -304,14 +361,19 @@ void ULabInteractionComponent::OnRep_bInteractionActive()
 	
 	if (bInteractionActive && IsValid(FocusedInteractableActor))
 	{
+		ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor, TempInteractionData);
+		
 		OnUpdateInteractionWidget.Broadcast(this, TempInteractionData.DisplayText, TempInteractionData.GetInputKeys());
 		
-		SetVisibility(true);
 		InteractionWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+		if (!IsVisible())
+		{
+			SetVisibility(true);
+		}
 	}
 	else
 	{
-		SetVisibility(false);
 		InteractionWidget->SetVisibility(ESlateVisibility::Hidden);
 	}
 }

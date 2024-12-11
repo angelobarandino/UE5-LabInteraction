@@ -13,6 +13,7 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateInteractionWidget, ULabInteractionComponent*, Interactor, const FText&, InteractableName, const TArray<FLabInteractInputTemplate>&, InteractionKeys);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHoldProgressUpdated, ULabInteractInputKey*, InputKey, float, Progress);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnInteractionActiveChanged, ULabInteractionComponent*, Interactor, bool, bActive);
 
 class ULabInteractableInterface;
 
@@ -39,6 +40,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnHoldProgressUpdated OnHoldProgressUpdated;
+
+	UPROPERTY(BlueprintAssignable, Category = "Events")
+	FOnInteractionActiveChanged OnInteractionActiveChanged;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Detection")
 	TEnumAsByte<ECollisionChannel> DetectionChannel;
@@ -63,6 +67,13 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void Interact(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate);
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction", meta=(DeterminesOutputType=NewWidgetClass))
+	UUserWidget* PushWidget(const TSubclassOf<UUserWidget> NewWidgetClass);
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void PopWidget(UUserWidget*& OutActiveWidget);
+
 	
 private:
 	bool bDetectionActive = false;
@@ -72,6 +83,9 @@ private:
 	FTimerHandle HoldDelayTimerHandle;
 	FLabInteractableData TempInteractionData;
 	TMap<ULabInteractInputKey*, float> InputStartTimes;
+
+	TSubclassOf<UUserWidget> InitialWidgetClass;
+	TArray<TSubclassOf<UUserWidget>> WidgetStack;
 
 	UPROPERTY()
 	TObjectPtr<AActor> FocusedInteractableActor;
