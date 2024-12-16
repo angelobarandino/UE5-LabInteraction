@@ -67,7 +67,7 @@ void ULabInteractionComponent::SetDetectionActive(const bool bNewActive)
 	if (!Pawn->IsLocallyControlled())
 	{
 		UE_LOG(LogLabInteraction, Warning, TEXT("SetDetectionActive: Pawn is not locally controlled. Detection will be inactive."));
-        bDetectionActive = false;
+		bDetectionActive = false;
 		return;
 	}
 
@@ -83,6 +83,203 @@ void ULabInteractionComponent::SetDetectionActive(const bool bNewActive)
 	
 	UE_LOG(LogLabInteraction, Log, TEXT("SetDetectionActive: Detection active state updated. New state: %s | Role: %d"), 
 		bDetectionActive ? TEXT("Active") : TEXT("Inactive"), GetOwner()->GetLocalRole());
+}
+
+void ULabInteractionComponent::SetInteractionActive(const bool bNewActive)
+{
+	if (bInteractionActive != bNewActive)
+	{
+		bInteractionActive = bNewActive;
+
+		UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
+			*GetOwner()->GetName(), bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
+	
+		OnInteractionActiveChanged.Broadcast(this, bInteractionActive);	
+
+		OnRep_bInteractionActive();
+	}
+}
+
+UUserWidget* ULabInteractionComponent::PushWidget(const TSubclassOf<UUserWidget> NewWidgetClass)
+{
+	if (!NewWidgetClass)
+	{
+		UE_LOG(LogLabInteraction, Warning, TEXT("NewWidgetClass is null"));
+		return nullptr;
+	}
+	
+	const APawn* OwningActor = Cast<APawn>(GetOwner());
+	if (OwningActor && OwningActor->IsLocallyControlled())
+	{
+		if (GetWidget()->IsA(NewWidgetClass))
+		{
+			return nullptr;
+		}
+		
+		if (WidgetStack.Num() == 0 && !InitialWidgetClass)
+		{
+			InitialWidgetClass = GetWidgetClass();
+		}
+			
+		WidgetStack.Add(NewWidgetClass);
+		
+		SetWidgetClass(NewWidgetClass);
+		InitializeWidget();
+
+		OnRep_bInteractionActive();
+		return GetWidget();
+	}
+
+	UE_LOG(LogLabInteraction, Warning, TEXT("PushWidget: OwningActor is not locally controlled"));
+	return nullptr;
+}
+
+void ULabInteractionComponent::PopWidget(UUserWidget*& OutActiveWidget)
+{
+	if (WidgetStack.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PopWidget: Cannot pop widget. Already at the initial widget."));
+		OutActiveWidget = GetWidget();
+		return;
+	}
+	
+	WidgetStack.Pop();
+	OutActiveWidget = PushWidget(WidgetStack.Last());
+}
+
+void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed)
+{
+	if (!IsValid(InputKey))
+	{
+		UE_LOG(LogLabInteraction, Error, TEXT("InteractionInput is called but InputKey is missing."))
+		return;
+	}
+
+	if (!IsValid(FocusedInteractableActor))
+	{
+		UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput is called but no focused interactable actor."))
+		return;
+	}
+
+	const float CurrentTimeSeconds = GetWorld()->GetTimeSeconds();
+
+	if (bPressed)
+	{
+		if (InputStartTimes.Contains(InputKey))
+		{
+			UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput duplicate key press detected."));
+			return;
+		}
+		
+        // Record the time when the key is pressed
+		InputStartTimes.Add(InputKey, CurrentTimeSeconds);
+
+		bHoldProgressActive = false;
+		GetWorld()->GetTimerManager().SetTimer(
+			HoldDelayTimerHandle,
+			this,
+			&ThisClass::BeginHoldProgress,
+			PressDurationThreshold,
+			false);
+	}
+	else
+	{
+		// clear hold delay timer handle
+		GetWorld()->GetTimerManager().ClearTimer(HoldDelayTimerHandle);
+		
+		const float* StartTime = InputStartTimes.Find(InputKey);
+		if (!StartTime)
+		{
+			UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput released without matching press."));
+			return;
+		}
+
+		// Calculate how long the input was held
+		const float PressDuration = CurrentTimeSeconds - *StartTime;
+		
+		// Remove recorded key pressed
+		InputStartTimes.Remove(InputKey);
+
+		const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.GetInputKeys();
+		for (int Index = 0; Index < InteractInputKeys.Num(); ++Index)
+		{
+			if (InteractInputKeys[Index].InputKey.Get() != InputKey)
+			{
+				continue;
+			}
+			
+			if (InteractInputKeys[Index].InteractionType == ELabInteractionType::InteractionType_Press)
+			{
+				if (PressDuration < PressDurationThreshold)
+				{
+					UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
+					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+				}
+				else
+				{
+					const bool ContainsHoldInput = InteractInputKeys.ContainsByPredicate([](const FLabInteractInputTemplate& Template)
+					{
+						return Template.InteractionType == ELabInteractionType::InteractionType_Hold;
+					});
+
+					if (!ContainsHoldInput)
+					{
+						UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
+						Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+					}
+				}
+			}
+			else if (InteractInputKeys[Index].InteractionType == ELabInteractionType::InteractionType_Hold)
+			{
+				// Reset progress when key is released
+				OnHoldProgressUpdated.Broadcast(InputKey, 0);
+			
+				if (PressDuration >= InteractInputKeys[Index].InteractionDuration)
+				{
+					UE_LOG(LogLabInteraction, Log, TEXT("Hold detected."));
+					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+				}
+			}
+		}
+	}
+}
+
+void ULabInteractionComponent::Interact_Implementation(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate)
+{
+	if (!IsValid(InteractableActor))
+		return;
+
+	if (!InputTemplate.InputKey.IsValid())
+		return;
+
+	ILabInteractableInterface::Execute_Interact(InteractableActor, InputTemplate.Name, this);
+}
+
+void ULabInteractionComponent::OnRep_bInteractionActive()
+{
+	UUserWidget* InteractionWidget = GetWidget();
+	if (!IsValid(InteractionWidget))
+	{
+		return;
+	}
+	
+	if (bInteractionActive && IsValid(FocusedInteractableActor))
+	{
+		ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor, TempInteractionData.Key, TempInteractionData);
+		
+		OnUpdateInteractionWidget.Broadcast(this, TempInteractionData.DisplayText, TempInteractionData.GetInputKeys());
+		
+		InteractionWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+		if (!IsVisible())
+		{
+			SetVisibility(true);
+		}
+	}
+	else
+	{
+		InteractionWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
 }
 
 void ULabInteractionComponent::TraceInteractables(const float DeltaTime)
@@ -184,199 +381,6 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 	}
 }
 
-void ULabInteractionComponent::SetInteractionActive(const bool bNewActive)
-{
-	if (bInteractionActive != bNewActive)
-	{
-		bInteractionActive = bNewActive;
-
-		UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
-			*GetOwner()->GetName(), bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
-	
-		OnInteractionActiveChanged.Broadcast(this, bInteractionActive);	
-
-		OnRep_bInteractionActive();
-	}
-}
-
-void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed)
-{
-	if (!IsValid(InputKey))
-	{
-		UE_LOG(LogLabInteraction, Error, TEXT("InteractionInput is called but InputKey is missing."))
-		return;
-	}
-
-	if (!IsValid(FocusedInteractableActor))
-	{
-		UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput is called but no focused interactable actor."))
-		return;
-	}
-
-	const float CurrentTimeSeconds = GetWorld()->GetTimeSeconds();
-
-	if (bPressed)
-	{
-		if (InputStartTimes.Contains(InputKey))
-		{
-			UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput duplicate key press detected."));
-			return;
-		}
-		
-        // Record the time when the key is pressed
-		InputStartTimes.Add(InputKey, CurrentTimeSeconds);
-
-		bHoldProgressActive = false;
-		GetWorld()->GetTimerManager().SetTimer(
-			HoldDelayTimerHandle,
-			this,
-			&ThisClass::BeginHoldProgress,
-			PressDurationThreshold,
-			false);
-	}
-	else
-	{
-		// clear hold delay timer handle
-		GetWorld()->GetTimerManager().ClearTimer(HoldDelayTimerHandle);
-		
-		const float* StartTime = InputStartTimes.Find(InputKey);
-		if (!StartTime)
-		{
-			UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput released without matching press."));
-			return;
-		}
-
-		// Calculate how long the input was held
-		const float PressDuration = CurrentTimeSeconds - *StartTime;
-		
-		// Remove recorded key pressed
-		InputStartTimes.Remove(InputKey);
-
-		const TArray<FLabInteractInputTemplate>& InteractInputKeys = TempInteractionData.GetInputKeys();
-		for (int Index = 0; Index < InteractInputKeys.Num(); ++Index)
-		{
-			if (InteractInputKeys[Index].InputKey.Get() != InputKey)
-			{
-				continue;
-			}
-			
-			if (InteractInputKeys[Index].InteractionType == ELabInteractionType::InteractionType_Press)
-			{
-				if (PressDuration < PressDurationThreshold)
-				{
-					UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
-					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
-				}
-				else
-				{
-					const bool ContainsHoldInput = InteractInputKeys.ContainsByPredicate([](const FLabInteractInputTemplate& Template)
-					{
-						return Template.InteractionType == ELabInteractionType::InteractionType_Hold;
-					});
-
-					if (!ContainsHoldInput)
-					{
-						UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
-						Interact(FocusedInteractableActor, InteractInputKeys[Index]);
-					}
-				}
-			}
-			else if (InteractInputKeys[Index].InteractionType == ELabInteractionType::InteractionType_Hold)
-			{
-				// Reset progress when key is released
-				OnHoldProgressUpdated.Broadcast(InputKey, 0);
-			
-				if (PressDuration >= InteractInputKeys[Index].InteractionDuration)
-				{
-					UE_LOG(LogLabInteraction, Log, TEXT("Hold detected."));
-					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
-				}
-			}
-		}
-	}
-} 
-UUserWidget* ULabInteractionComponent::PushWidget(const TSubclassOf<UUserWidget> NewWidgetClass)
-{
-	if (!NewWidgetClass)
-	{
-		UE_LOG(LogLabInteraction, Warning, TEXT("NewWidgetClass is null"));
-		return nullptr;
-	}
-	
-	const APawn* OwningActor = Cast<APawn>(GetOwner());
-	if (OwningActor && OwningActor->IsLocallyControlled())
-	{
-		if (GetWidget()->IsA(NewWidgetClass))
-			return nullptr;
-		
-		if (WidgetStack.Num() == 0 && !InitialWidgetClass)
-		{
-			InitialWidgetClass = GetWidgetClass();
-		}
-			
-		WidgetStack.Add(NewWidgetClass);
-		
-		SetWidgetClass(NewWidgetClass);
-		InitializeWidget();
-
-		OnRep_bInteractionActive();
-		return GetWidget();
-	}
-
-	UE_LOG(LogLabInteraction, Warning, TEXT("PushWidget: OwningActor is not locally controlled"));
-	return nullptr;
-}
-
-void ULabInteractionComponent::PopWidget(UUserWidget*& OutActiveWidget)
-{
-	if (WidgetStack.Num() == 0)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("PopWidget: Cannot pop widget. Already at the initial widget."));
-		OutActiveWidget = GetWidget();
-		return;
-	}
-	
-	WidgetStack.Pop();
-	OutActiveWidget = PushWidget(WidgetStack.Last());
-}
-
-void ULabInteractionComponent::Interact_Implementation(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate)
-{
-	if (!IsValid(InteractableActor))
-		return;
-
-	if (!InputTemplate.InputKey.IsValid())
-		return;
-
-	ILabInteractableInterface::Execute_Interact(InteractableActor, InputTemplate.Name, this);
-}
-
-void ULabInteractionComponent::OnRep_bInteractionActive()
-{
-	UUserWidget* InteractionWidget = GetWidget();
-	if (!IsValid(InteractionWidget))
-	{
-		return;
-	}
-	
-	if (bInteractionActive && IsValid(FocusedInteractableActor))
-	{
-		ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor, TempInteractionData);
-		
-		OnUpdateInteractionWidget.Broadcast(this, TempInteractionData.DisplayText, TempInteractionData.GetInputKeys());
-		
-		InteractionWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
-
-		if (!IsVisible())
-		{
-			SetVisibility(true);
-		}
-	}
-	else
-	{
-		InteractionWidget->SetVisibility(ESlateVisibility::Hidden);
-	}
-}
 
 void ULabInteractionComponent::UpdateInteractionVisuals()
 {

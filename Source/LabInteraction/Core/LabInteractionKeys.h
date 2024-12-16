@@ -49,7 +49,10 @@ struct FLabInteractableData
 {
 	GENERATED_BODY()
 
-	FLabInteractableData() {}
+	FLabInteractableData() : Key("Default") {}
+	
+	UPROPERTY(BlueprintReadWrite, EditDefaultsOnly, Category = "Interaction")
+	FName Key;
 	
 	UPROPERTY(BlueprintReadWrite, EditDefaultsOnly, Category = "Interaction")
 	FText DisplayText = FText::FromString("Placeholder Text");

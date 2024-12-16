@@ -28,7 +28,7 @@ public:
 	void UpdateFocus(bool bActive);
 
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
-	void GetInteractableData(FLabInteractableData& InteractableData);
+	void GetInteractableData(const FName& CurrentKey, FLabInteractableData& InteractableData);
 
 	UFUNCTION(BlueprintImplementableEvent)
 	void Interact(const FName& Name, const ULabInteractionComponent* Interactor);

@@ -61,18 +61,18 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void SetInteractionActive(bool bNewActive);
+	
+	UFUNCTION(BlueprintCallable, Category = "Interaction", meta=(DeterminesOutputType=NewWidgetClass))
+	UUserWidget* PushWidget(const TSubclassOf<UUserWidget> NewWidgetClass);
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void PopWidget(UUserWidget*& OutActiveWidget);
 
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void InteractionInput(ULabInteractInputKey* InputKey, const bool bPressed);
 
 	UFUNCTION(Server, Reliable)
 	void Interact(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate);
-
-	UFUNCTION(BlueprintCallable, Category = "Interaction", meta=(DeterminesOutputType=NewWidgetClass))
-	UUserWidget* PushWidget(const TSubclassOf<UUserWidget> NewWidgetClass);
-
-	UFUNCTION(BlueprintCallable, Category = "Interaction")
-	void PopWidget(UUserWidget*& OutActiveWidget);
 
 	
 private:
@@ -94,6 +94,9 @@ private:
 	bool bInteractionActive = false;
 
 	UFUNCTION()
+	void OnRep_bInteractionActive();
+
+	UFUNCTION()
 	void TraceInteractables(const float DeltaTime);
 
 	UFUNCTION()
@@ -107,20 +110,18 @@ private:
 
 	UFUNCTION()
 	void UpdateFocusedInteractable(AActor* InteractableActor);
-
-	UFUNCTION()
-	void OnRep_bInteractionActive();
 	
 	UFUNCTION()
 	void UpdateInteractionVisuals();
 	
 	UFUNCTION()
 	void InitializeWidget();
-
+	
 	UFUNCTION()
 	void BeginHoldProgress();
 
 	UFUNCTION()
 	void UpdateHoldInteraction(float DeltaTime);
+	
 };
 
