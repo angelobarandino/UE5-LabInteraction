@@ -25,6 +25,9 @@ class LABINTERACTION_API ILabInteractionWidgetInterface
 public:
 
 	UFUNCTION(BlueprintImplementableEvent)
-	void InitializeBindings(ULabInteractionComponent* InteractionComponent);
+	void OnInitInteractionWidget(ULabInteractionComponent* Interactor);
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
+	void UpdateDisplay(const FText& DisplayName, const TArray<FLabInteractInputTemplate>& InteractionKeys);
 	
 };

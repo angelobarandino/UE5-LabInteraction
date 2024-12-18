@@ -1,18 +1,10 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "LabInteractInputKey.h"
 #include "Engine/DataTable.h"
 #include "LabInteraction/LabInteraction.h"
 #include "LabInteractionKeys.generated.h"
-
-class ULabInteractInputKey;
-
-UENUM(BlueprintType)
-enum class ELabInteractionType : uint8
-{
-	InteractionType_Press	UMETA(DisplayName="Press"),
-	InteractionType_Hold	UMETA(DisplayName="Hold")
-};
 
 USTRUCT(BlueprintType)
 struct FLabInteractInputTemplate
@@ -65,30 +57,25 @@ struct FLabInteractableData
 
 	FORCEINLINE TArray<FLabInteractInputTemplate> GetInputKeys() const
 	{
-		if (!IsValid())
+		if (InteractionKeysRowHandle.IsNull())
 		{
-			UE_LOG(LogLabInteraction, Warning, TEXT("Failed to retrieve row from InteractionKeysRowHandle, there is no valid data."));
+			UE_LOG(LogLabInteraction, Warning, TEXT("GetInputKeys: Failed to retrieve row from InteractionKeysRowHandle, there is no valid data."));
 			return TArray<FLabInteractInputTemplate>();
 		}
 		
 		if (CachedInteractionKeys.IsSet())
 		{
 			return CachedInteractionKeys.GetValue()->InputKeys;
-		}
+		} 
 		
-		CachedInteractionKeys = InteractionKeysRowHandle.GetRow<FLabInteractionKeys>("FLabInteractableData::GetInputKeys");
+		CachedInteractionKeys = InteractionKeysRowHandle.GetRow<FLabInteractionKeys>("GetInputKeys: FLabInteractableData::GetInputKeys");
 		if (!CachedInteractionKeys.IsSet())
 		{
-			UE_LOG(LogLabInteraction, Warning, TEXT("Failed to retrieve row from InteractionKeysRowHandle in FLabInteractableData."));
+			UE_LOG(LogLabInteraction, Warning, TEXT("GetInputKeys: Failed to retrieve FLabInteractableData. CachedInteractionKeys.IsSet() function returned false."));
 			return TArray<FLabInteractInputTemplate>();
 		}
 
 		return CachedInteractionKeys.GetValue()->InputKeys;
-	}
-
-	FORCEINLINE bool IsValid() const
-	{
-		return InteractionKeysRowHandle.DataTable != nullptr && InteractionKeysRowHandle.RowName != NAME_None;
 	}
 
 private:

@@ -16,7 +16,6 @@ ULabInteractionComponent::ULabInteractionComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	TempInteractionData = FLabInteractableData();
 
-	SetVisibility(false);
 	SetIsReplicatedByDefault(true);
 	SetWidgetSpace(EWidgetSpace::Screen);
 	SetDrawAtDesiredSize(true);
@@ -39,22 +38,29 @@ void ULabInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	
 	TraceInteractables(DeltaTime);
 	UpdateHoldInteraction(DeltaTime);
-	UpdateInteractionVisuals();
+	UpdateWidgetPlacement();
 }
 
 void ULabInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	InitialWidgetClass = GetWidgetClass();
-
-	InitializeWidget();
 
 	SetDetectionActive(true);
+
+	InitializeWidget();
 }
 
 void ULabInteractionComponent::SetDetectionActive(const bool bNewActive)
 {
+	InitialWidgetClass = GetWidgetClass();
+	if (!InitialWidgetClass)
+	{
+		UE_LOG(LogLabInteraction, Error, 
+			TEXT("SetDetectionActive: InitialWidgetClass is null. Ensure that the widget class is properly set in the editor or code. Detection will be inactive."));
+		bDetectionActive = false;
+		return;
+	}
+	
 	const APawn* Pawn = Cast<APawn>(GetOwner());
 	if (!IsValid(Pawn))
 	{
@@ -94,8 +100,6 @@ void ULabInteractionComponent::SetInteractionActive(const bool bNewActive)
 		UE_LOG(LogLabInteraction, Log, TEXT("SetInteractionActive called. Owner: %s, New Active State: %s"), 
 			*GetOwner()->GetName(), bInteractionActive ? TEXT("Active") : TEXT("Inactive"));
 	
-		OnInteractionActiveChanged.Broadcast(this, bInteractionActive);	
-
 		OnRep_bInteractionActive();
 	}
 }
@@ -116,17 +120,20 @@ UUserWidget* ULabInteractionComponent::PushWidget(const TSubclassOf<UUserWidget>
 			return nullptr;
 		}
 		
-		if (WidgetStack.Num() == 0 && !InitialWidgetClass)
+		if (WidgetStack.Num() == 0 && InitialWidgetClass)
 		{
-			InitialWidgetClass = GetWidgetClass();
+			WidgetStack.Add(InitialWidgetClass);
 		}
-			
-		WidgetStack.Add(NewWidgetClass);
+
+		if (!WidgetStack.Contains(NewWidgetClass))
+		{
+			WidgetStack.Add(NewWidgetClass);
+		}
 		
 		SetWidgetClass(NewWidgetClass);
 		InitializeWidget();
 
-		OnRep_bInteractionActive();
+		UpdateWidgetContent(FocusedInteractableActor);
 		return GetWidget();
 	}
 
@@ -136,13 +143,14 @@ UUserWidget* ULabInteractionComponent::PushWidget(const TSubclassOf<UUserWidget>
 
 void ULabInteractionComponent::PopWidget(UUserWidget*& OutActiveWidget)
 {
-	if (WidgetStack.Num() == 0)
+	if (WidgetStack.Num() <= 1)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("PopWidget: Cannot pop widget. Already at the initial widget."));
-		OutActiveWidget = GetWidget();
+		OutActiveWidget = PushWidget(InitialWidgetClass);
+		WidgetStack.Empty();
 		return;
 	}
-	
+
 	WidgetStack.Pop();
 	OutActiveWidget = PushWidget(WidgetStack.Last());
 }
@@ -255,26 +263,22 @@ void ULabInteractionComponent::Interact_Implementation(AActor* InteractableActor
 	ILabInteractableInterface::Execute_Interact(InteractableActor, InputTemplate.Name, this);
 }
 
-void ULabInteractionComponent::OnRep_bInteractionActive()
+void ULabInteractionComponent::OnRep_bInteractionActive() const
 {
 	UUserWidget* InteractionWidget = GetWidget();
 	if (!IsValid(InteractionWidget))
 	{
 		return;
 	}
+
+	if (!InteractionWidget->Implements<ULabInteractionWidgetInterface>())
+	{
+		return;
+	}
 	
 	if (bInteractionActive && IsValid(FocusedInteractableActor))
 	{
-		ILabInteractableInterface::Execute_GetInteractableData(FocusedInteractableActor, TempInteractionData.Key, TempInteractionData);
-		
-		OnUpdateInteractionWidget.Broadcast(this, TempInteractionData.DisplayText, TempInteractionData.GetInputKeys());
-		
 		InteractionWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-
-		if (!IsVisible())
-		{
-			SetVisibility(true);
-		}
 	}
 	else
 	{
@@ -291,15 +295,6 @@ void ULabInteractionComponent::TraceInteractables(const float DeltaTime)
 
 		UpdateFocusedInteractable(PerformTrace());
 	}
-}
-
-EDrawDebugTrace::Type ULabInteractionComponent::GetDrawDebugType() const
-{
-#if WITH_EDITOR
-	return bShowDebugTraces ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None;
-#else
-	return EDrawDebugTrace::None;
-#endif
 }
 
 AActor* ULabInteractionComponent::PerformTrace() const
@@ -357,32 +352,54 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 	{
 		if (FocusedInteractableActor)
 		{
-			TempInteractionData = FLabInteractableData();
 			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, false);
+		}
+		
+		if (WidgetStack.Num() != 0)
+		{
+			WidgetStack.Empty();
+			SetWidgetClass(InitialWidgetClass);
+			InitializeWidget();
 		}
 		
 		FocusedInteractableActor = InteractableActor;
 		if (IsValid(FocusedInteractableActor))
 		{
-			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, true);
+			ILabInteractableInterface::Execute_UpdateFocus(InteractableActor, true);
+
+			UpdateWidgetContent(InteractableActor);
 			SetInteractionActive(true);
 		}
 		else
 		{
-			if (WidgetStack.Num() != 0)
-			{
-				WidgetStack.Empty();
-				SetWidgetClass(InitialWidgetClass);
-				InitializeWidget();
-			}
-			
+			TempInteractionData = FLabInteractableData();
 			SetInteractionActive(false);
 		}
 	}
 }
 
+void ULabInteractionComponent::UpdateWidgetContent(AActor* InteractableActor)
+{
+	if (IsValid(InteractableActor))
+	{
+		ILabInteractableInterface::Execute_GetInteractableData(InteractableActor, TempInteractionData.Key, TempInteractionData);
 
-void ULabInteractionComponent::UpdateInteractionVisuals()
+		TArray<ULabInteractInputKeyInstance*> InputKeys;
+		for (const FLabInteractInputTemplate InputTemplate : TempInteractionData.GetInputKeys())
+		{
+			ULabInteractInputKeyInstance* InputKey = NewObject<ULabInteractInputKeyInstance>();
+			InputKey->DisplayText = InputTemplate.DisplayText;
+			InputKey->InputKey = InputTemplate.InputKey.Get();
+			InputKey->InteractionType = InputTemplate.InteractionType;
+			InputKey->InteractionDuration = InputTemplate.InteractionDuration;
+			InputKeys.Add(InputKey);
+		}
+
+		OnUpdateInteractionWidget.Broadcast(this, TempInteractionData.DisplayText, InputKeys);
+	}
+}
+
+void ULabInteractionComponent::UpdateWidgetPlacement()
 {
 	if (bInteractionActive && IsValid(FocusedInteractableActor))
 	{
@@ -391,7 +408,6 @@ void ULabInteractionComponent::UpdateInteractionVisuals()
 		
 		FocusedInteractableActor->GetActorBounds(false, Origin, BoxExtent);
 		const FVector BoundingBoxCenter = Origin;
-		
 		SetWorldLocation(BoundingBoxCenter);
 	}
 }
@@ -408,8 +424,10 @@ void ULabInteractionComponent::InitializeWidget()
 
 	if (InteractionWidget->Implements<ULabInteractionWidgetInterface>())
 	{
-		ILabInteractionWidgetInterface::Execute_InitializeBindings(InteractionWidget, this);
+		ILabInteractionWidgetInterface::Execute_OnInitInteractionWidget(InteractionWidget, this);
 	}
+
+	InteractionWidget->SetVisibility(bInteractionActive ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Hidden);
 }
 
 void ULabInteractionComponent::BeginHoldProgress()

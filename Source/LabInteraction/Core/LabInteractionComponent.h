@@ -11,9 +11,9 @@
 #include "LabInteractionComponent.generated.h"
 
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateInteractionWidget, ULabInteractionComponent*, Interactor, const FText&, InteractableName, const TArray<FLabInteractInputTemplate>&, InteractionKeys);
+class ULabInteractInputKeyInstance;
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateInteractionWidget, ULabInteractionComponent*, Interactor, const FText&, InteractableName, const TArray<ULabInteractInputKeyInstance*>&, InputKeys);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHoldProgressUpdated, ULabInteractInputKey*, InputKey, float, Progress);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnInteractionActiveChanged, ULabInteractionComponent*, Interactor, bool, bActive);
 
 class ULabInteractableInterface;
 
@@ -40,9 +40,6 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnHoldProgressUpdated OnHoldProgressUpdated;
-
-	UPROPERTY(BlueprintAssignable, Category = "Events")
-	FOnInteractionActiveChanged OnInteractionActiveChanged;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Detection")
 	TEnumAsByte<ECollisionChannel> DetectionChannel;
@@ -74,7 +71,6 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Interact(AActor* InteractableActor, const FLabInteractInputTemplate& InputTemplate);
 
-	
 private:
 	bool bDetectionActive = false;
 	float LastUpdateTime = 0.f;
@@ -82,10 +78,12 @@ private:
 	bool bHoldProgressActive = false;
 	FTimerHandle HoldDelayTimerHandle;
 	FLabInteractableData TempInteractionData;
-	TMap<ULabInteractInputKey*, float> InputStartTimes;
 
 	TSubclassOf<UUserWidget> InitialWidgetClass;
 	TArray<TSubclassOf<UUserWidget>> WidgetStack;
+	
+	UPROPERTY()
+	TMap<ULabInteractInputKey*, float> InputStartTimes;
 
 	UPROPERTY()
 	TObjectPtr<AActor> FocusedInteractableActor;
@@ -94,25 +92,34 @@ private:
 	bool bInteractionActive = false;
 
 	UFUNCTION()
-	void OnRep_bInteractionActive();
+	void OnRep_bInteractionActive() const;
 
 	UFUNCTION()
 	void TraceInteractables(const float DeltaTime);
-
-	UFUNCTION()
-	EDrawDebugTrace::Type GetDrawDebugType() const;
 	
 	UFUNCTION()
 	AActor* PerformTrace() const;
+	
+	FORCEINLINE EDrawDebugTrace::Type GetDrawDebugType() const
+	{
+#if WITH_EDITOR
+		return bShowDebugTraces ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None;
+#else
+		return EDrawDebugTrace::None;
+#endif
+	}
 	
 	UFUNCTION()
 	AActor* FindNearestInteractable(const FVector& CurrentLocation, const TArray<FHitResult>& HitResults) const;
 
 	UFUNCTION()
 	void UpdateFocusedInteractable(AActor* InteractableActor);
+
+	UFUNCTION()
+	void UpdateWidgetContent(AActor* InteractableActor);
 	
 	UFUNCTION()
-	void UpdateInteractionVisuals();
+	void UpdateWidgetPlacement();
 	
 	UFUNCTION()
 	void InitializeWidget();
@@ -122,6 +129,5 @@ private:
 
 	UFUNCTION()
 	void UpdateHoldInteraction(float DeltaTime);
-	
 };
 
