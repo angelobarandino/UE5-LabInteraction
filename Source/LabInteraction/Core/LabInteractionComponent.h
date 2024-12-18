@@ -86,7 +86,7 @@ private:
 	TMap<ULabInteractInputKey*, float> InputStartTimes;
 
 	UPROPERTY()
-	TObjectPtr<AActor> FocusedInteractableActor;
+	TObjectPtr<AActor> NearbyInteractableActor;
 	
 	UPROPERTY(ReplicatedUsing = OnRep_bInteractionActive)
 	bool bInteractionActive = false;

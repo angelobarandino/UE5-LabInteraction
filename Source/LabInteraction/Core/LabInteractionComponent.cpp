@@ -133,7 +133,7 @@ UUserWidget* ULabInteractionComponent::PushWidget(const TSubclassOf<UUserWidget>
 		SetWidgetClass(NewWidgetClass);
 		InitializeWidget();
 
-		UpdateWidgetContent(FocusedInteractableActor);
+		UpdateWidgetContent(NearbyInteractableActor);
 		return GetWidget();
 	}
 
@@ -163,7 +163,7 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
 		return;
 	}
 
-	if (!IsValid(FocusedInteractableActor))
+	if (!IsValid(NearbyInteractableActor))
 	{
 		UE_LOG(LogLabInteraction, Warning, TEXT("InteractionInput is called but no focused interactable actor."))
 		return;
@@ -221,7 +221,7 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
 				if (PressDuration < PressDurationThreshold)
 				{
 					UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
-					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+					Interact(NearbyInteractableActor, InteractInputKeys[Index]);
 				}
 				else
 				{
@@ -233,7 +233,7 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
 					if (!ContainsHoldInput)
 					{
 						UE_LOG(LogLabInteraction, Log, TEXT("Short press detected."));
-						Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+						Interact(NearbyInteractableActor, InteractInputKeys[Index]);
 					}
 				}
 			}
@@ -245,7 +245,7 @@ void ULabInteractionComponent::InteractionInput(ULabInteractInputKey* InputKey, 
 				if (PressDuration >= InteractInputKeys[Index].InteractionDuration)
 				{
 					UE_LOG(LogLabInteraction, Log, TEXT("Hold detected."));
-					Interact(FocusedInteractableActor, InteractInputKeys[Index]);
+					Interact(NearbyInteractableActor, InteractInputKeys[Index]);
 				}
 			}
 		}
@@ -276,7 +276,7 @@ void ULabInteractionComponent::OnRep_bInteractionActive() const
 		return;
 	}
 	
-	if (bInteractionActive && IsValid(FocusedInteractableActor))
+	if (bInteractionActive && IsValid(NearbyInteractableActor))
 	{
 		InteractionWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
@@ -348,11 +348,11 @@ AActor* ULabInteractionComponent::FindNearestInteractable(const FVector& Current
 
 void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableActor)
 {
-	if (InteractableActor != FocusedInteractableActor)
+	if (InteractableActor != NearbyInteractableActor)
 	{
-		if (FocusedInteractableActor)
+		if (NearbyInteractableActor)
 		{
-			ILabInteractableInterface::Execute_UpdateFocus(FocusedInteractableActor, false);
+			ILabInteractableInterface::Execute_UpdateFocus(NearbyInteractableActor, false);
 		}
 		
 		if (WidgetStack.Num() != 0)
@@ -362,8 +362,8 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 			InitializeWidget();
 		}
 		
-		FocusedInteractableActor = InteractableActor;
-		if (IsValid(FocusedInteractableActor))
+		NearbyInteractableActor = InteractableActor;
+		if (IsValid(NearbyInteractableActor))
 		{
 			ILabInteractableInterface::Execute_UpdateFocus(InteractableActor, true);
 
@@ -401,12 +401,12 @@ void ULabInteractionComponent::UpdateWidgetContent(AActor* InteractableActor)
 
 void ULabInteractionComponent::UpdateWidgetPlacement()
 {
-	if (bInteractionActive && IsValid(FocusedInteractableActor))
+	if (bInteractionActive && IsValid(NearbyInteractableActor))
 	{
 		FVector Origin;
         FVector BoxExtent;
 		
-		FocusedInteractableActor->GetActorBounds(false, Origin, BoxExtent);
+		NearbyInteractableActor->GetActorBounds(false, Origin, BoxExtent);
 		const FVector BoundingBoxCenter = Origin;
 		SetWorldLocation(BoundingBoxCenter);
 	}
@@ -432,7 +432,7 @@ void ULabInteractionComponent::InitializeWidget()
 
 void ULabInteractionComponent::BeginHoldProgress()
 {
-	if (!IsValid(FocusedInteractableActor))
+	if (!IsValid(NearbyInteractableActor))
 		return;
 	
 	bHoldProgressActive = true;
@@ -443,7 +443,7 @@ void ULabInteractionComponent::UpdateHoldInteraction(float DeltaTime)
 	if (!bHoldProgressActive)
 		return;
 	
-	if (!IsValid(FocusedInteractableActor))
+	if (!IsValid(NearbyInteractableActor))
 		return;
 	
 	if (InputStartTimes.IsEmpty())
@@ -497,7 +497,7 @@ void ULabInteractionComponent::UpdateHoldInteraction(float DeltaTime)
 			// Handle completion
 			if (Progress >= 1.0f)
 			{
-				Interact(FocusedInteractableActor, *InputTemplate);
+				Interact(NearbyInteractableActor, *InputTemplate);
 				bHoldProgressActive = false;
 				
 				UE_LOG(LogLabInteraction, Log, TEXT("Hold completed for InputKey."));
