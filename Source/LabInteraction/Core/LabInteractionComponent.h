@@ -12,7 +12,6 @@
 
 
 class ULabInteractInputKeyInstance;
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnUpdateInteractionWidget, ULabInteractionComponent*, Interactor, const FText&, InteractableName, const TArray<ULabInteractInputKeyInstance*>&, InputKeys);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHoldProgressUpdated, ULabInteractInputKey*, InputKey, float, Progress);
 
 class ULabInteractableInterface;
@@ -35,8 +34,6 @@ protected:
 	virtual void BeginPlay() override;
 	
 public:
-	UPROPERTY(BlueprintAssignable, Category = "Events")
-	FOnUpdateInteractionWidget OnUpdateInteractionWidget;
 
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnHoldProgressUpdated OnHoldProgressUpdated;

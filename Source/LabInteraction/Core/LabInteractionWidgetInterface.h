@@ -28,6 +28,6 @@ public:
 	void OnInitInteractionWidget(ULabInteractionComponent* Interactor);
 
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
-	void UpdateDisplay(const FText& DisplayName, const TArray<FLabInteractInputTemplate>& InteractionKeys);
+	void UpdateWidgetContent(ULabInteractionComponent* Interactor, const FText& DisplayName, const TArray<ULabInteractInputKeyInstance*>& InputKeys);
 	
 };

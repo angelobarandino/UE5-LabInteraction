@@ -380,7 +380,7 @@ void ULabInteractionComponent::UpdateFocusedInteractable(AActor* InteractableAct
 
 void ULabInteractionComponent::UpdateWidgetContent(AActor* InteractableActor)
 {
-	if (IsValid(InteractableActor))
+	if (IsValid(InteractableActor) && GetWidget()->Implements<ULabInteractionWidgetInterface>())
 	{
 		ILabInteractableInterface::Execute_GetInteractableData(InteractableActor, TempInteractionData.Key, TempInteractionData);
 
@@ -394,8 +394,8 @@ void ULabInteractionComponent::UpdateWidgetContent(AActor* InteractableActor)
 			InputKey->InteractionDuration = InputTemplate.InteractionDuration;
 			InputKeys.Add(InputKey);
 		}
-
-		OnUpdateInteractionWidget.Broadcast(this, TempInteractionData.DisplayText, InputKeys);
+		
+		ILabInteractionWidgetInterface::Execute_UpdateWidgetContent(GetWidget(), this, TempInteractionData.DisplayText, InputKeys);
 	}
 }
 
